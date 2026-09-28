@@ -2,7 +2,9 @@ fastapi
 uvicorn[standard]
 python-multipart
 python-dotenv
+pydantic
 pymupdf
-google-genai
+Pillow
 groq
 sentence-transformers>=3.0.0
+google-genai
