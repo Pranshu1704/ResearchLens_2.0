@@ -4,4 +4,5 @@ python-multipart
 python-dotenv
 pymupdf
 google-genai
+groq
 sentence-transformers>=3.0.0
