@@ -1,1 +1,7 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+pymupdf
+google-genai
 sentence-transformers>=3.0.0
