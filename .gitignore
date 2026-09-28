@@ -1,0 +1,43 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment variables
+.env
+*.env
+
+# =========================
+# Node
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend build
+dist/
+build/
+
+# =========================
+# ResearchLens runtime
+# =========================
+backend/uploads/
+backend/rag_cache/
+
+# =========================
+# IDE / OS
+# =========================
+.vscode/
+.idea/
+*.log
+
+.DS_Store
+Thumbs.db
