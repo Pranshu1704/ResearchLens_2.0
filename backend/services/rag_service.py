@@ -1,27 +1,24 @@
-import hashlib
-import json
-from pathlib import Path
+from threading import Lock
 
-import numpy as np
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, util
 
 
 MODEL_NAME = "all-MiniLM-L6-v2"
 
-# RAG cache is kept inside the backend project.
-CACHE_DIR = Path("rag_cache")
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
+# Lazy-load the embedding model. It is no longer loaded during FastAPI startup.
 _embedding_model = None
+_embedding_model_lock = Lock()
 
 
 def get_embedding_model():
     global _embedding_model
 
     if _embedding_model is None:
-        print("Loading embedding model...")
-        _embedding_model = SentenceTransformer(MODEL_NAME)
-        print("Embedding model loaded.")
+        with _embedding_model_lock:
+            if _embedding_model is None:
+                print("Loading embedding model on first RAG request...")
+                _embedding_model = SentenceTransformer(MODEL_NAME)
+                print("Embedding model loaded.")
 
     return _embedding_model
 
@@ -29,7 +26,7 @@ def get_embedding_model():
 def chunk_text(
     text: str,
     chunk_size: int = 1200,
-    overlap: int = 200
+    overlap: int = 200,
 ) -> list[str]:
     text = " ".join(text.split())
 
@@ -55,106 +52,13 @@ def chunk_text(
     return chunks
 
 
-def _cache_key(text: str) -> str:
-    text_hash = hashlib.sha256(
-        text.encode("utf-8")
-    ).hexdigest()
-
-    model_hash = hashlib.sha256(
-        MODEL_NAME.encode("utf-8")
-    ).hexdigest()[:12]
-
-    return f"{text_hash}_{model_hash}"
-
-
-def _cache_paths(text: str):
-    key = _cache_key(text)
-
-    metadata_path = CACHE_DIR / f"{key}.json"
-    embeddings_path = CACHE_DIR / f"{key}.npy"
-
-    return metadata_path, embeddings_path
-
-
-def _save_cache(
-    metadata_path: Path,
-    embeddings_path: Path,
-    chunks: list[str],
-    embeddings: np.ndarray
-):
-    metadata = {
-        "model_name": MODEL_NAME,
-        "chunk_count": len(chunks),
-        "chunks": chunks,
-    }
-
-    metadata_temp = metadata_path.with_suffix(".json.tmp")
-    embeddings_temp = embeddings_path.with_suffix(".npy.tmp")
-
-    metadata_temp.write_text(
-        json.dumps(metadata, ensure_ascii=False),
-        encoding="utf-8"
-    )
-
-    with embeddings_temp.open("wb") as file:
-        np.save(file, embeddings.astype(np.float32))
-
-    metadata_temp.replace(metadata_path)
-    embeddings_temp.replace(embeddings_path)
-
-
-def _load_cache(text: str):
-    metadata_path, embeddings_path = _cache_paths(text)
-
-    if not metadata_path.exists() or not embeddings_path.exists():
-        return None
-
-    try:
-        metadata = json.loads(
-            metadata_path.read_text(encoding="utf-8")
-        )
-
-        if metadata.get("model_name") != MODEL_NAME:
-            return None
-
-        chunks = metadata.get("chunks", [])
-
-        embeddings = np.load(
-            embeddings_path,
-            allow_pickle=False
-        )
-
-        if len(chunks) != len(embeddings):
-            return None
-
-        print(
-            "Loaded RAG index from cache:",
-            len(chunks),
-            "chunks"
-        )
-
-        return {
-            "chunks": chunks,
-            "embeddings": embeddings
-        }
-
-    except Exception as error:
-        print("RAG cache load failed:", repr(error))
-        return None
-
-
 def build_paper_index(text: str) -> dict:
-    cached_index = _load_cache(text)
-
-    if cached_index is not None:
-        return cached_index
-
     chunks = chunk_text(text)
 
     if not chunks:
         return {
             "chunks": [],
-            "embeddings": None
+            "embeddings": None,
         }
 
     model = get_embedding_model()
@@ -162,41 +66,26 @@ def build_paper_index(text: str) -> dict:
     print(
         "Creating embeddings for",
         len(chunks),
-        "chunks..."
+        "chunks...",
     )
 
     embeddings = model.encode(
         chunks,
-        convert_to_numpy=True,
+        convert_to_tensor=True,
         normalize_embeddings=True,
-        show_progress_bar=False
-    ).astype(np.float32)
-
-    metadata_path, embeddings_path = _cache_paths(text)
-
-    _save_cache(
-        metadata_path,
-        embeddings_path,
-        chunks,
-        embeddings
-    )
-
-    print(
-        "RAG index cached:",
-        len(chunks),
-        "chunks"
+        show_progress_bar=False,
     )
 
     return {
         "chunks": chunks,
-        "embeddings": embeddings
+        "embeddings": embeddings,
     }
 
 
 def retrieve_relevant_chunks(
     paper_index: dict,
     question: str,
-    top_k: int = 5
+    top_k: int = 5,
 ) -> list[str]:
     chunks = paper_index.get("chunks", [])
     embeddings = paper_index.get("embeddings")
@@ -207,20 +96,24 @@ def retrieve_relevant_chunks(
     model = get_embedding_model()
 
     query_embedding = model.encode(
-        [question],
-        convert_to_numpy=True,
+        question,
+        convert_to_tensor=True,
         normalize_embeddings=True,
-        show_progress_bar=False
-    )[0].astype(np.float32)
+        show_progress_bar=False,
+    )
 
-    # Because both vectors are normalized, dot product is cosine similarity.
-    scores = embeddings @ query_embedding
+    scores = util.cos_sim(
+        query_embedding,
+        embeddings,
+    )[0]
 
-    top_k = min(top_k, len(chunks))
+    ranked_indices = scores.argsort(
+        descending=True
+    ).tolist()
 
-    ranked_indices = np.argsort(scores)[::-1][:top_k]
+    selected_chunks = []
 
-    return [
-        chunks[index]
-        for index in ranked_indices
-    ]
+    for index in ranked_indices[:top_k]:
+        selected_chunks.append(chunks[index])
+
+    return selected_chunks
