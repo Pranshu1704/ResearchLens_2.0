@@ -1,8 +1,20 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import jsPDF from "jspdf";
+import ReactGA from "react-ga4";
 import "./App.css";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+
+const GA_MEASUREMENT_ID =
+  import.meta.env.VITE_GA_MEASUREMENT_ID || "G-05KPJF9JWE";
+
+ReactGA.initialize(GA_MEASUREMENT_ID);
+
+ReactGA.send({
+  hitType: "pageview",
+  page: window.location.pathname,
+});
 
 function formatFileSize(bytes) {
   if (!bytes) return "0 KB";
@@ -237,6 +249,10 @@ function downloadSummary(result, fileName) {
     if (!safeFileName) {
       safeFileName = "research-summary";
     }
+
+    ReactGA.event("summary_downloaded", {
+      format: "pdf",
+    });
 
     doc.save(`${safeFileName}.pdf`);
   } catch (error) {
@@ -518,6 +534,10 @@ function FigureCard({ image, index }) {
 
       setExplanation(data.explanation || "No explanation returned.");
       setShowExplanation(true);
+
+      ReactGA.event("figure_analysis_completed", {
+        figure_number: index + 1,
+      });
     } catch (err) {
       setError(err.message || "Unable to analyze this figure.");
     } finally {
@@ -777,6 +797,7 @@ export default function App() {
   const [chatError, setChatError] = useState("");
 
   const inputRef = useRef(null);
+  const analysisStartTimeRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -868,6 +889,15 @@ export default function App() {
     setError("");
     setResult(null);
 
+    analysisStartTimeRef.current = performance.now();
+
+    ReactGA.event("pdf_analysis_started", {
+      file_type: "pdf",
+      file_size_mb: Number(
+        (file.size / (1024 * 1024)).toFixed(2)
+      ),
+    });
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -903,12 +933,30 @@ export default function App() {
 
       console.log("ResearchLens API response:", data);
 
+      const analysisDuration =
+        analysisStartTimeRef.current
+          ? Number(
+              (
+                (performance.now() -
+                  analysisStartTimeRef.current) /
+                1000
+              ).toFixed(2)
+            )
+          : 0;
+
+      ReactGA.event("pdf_analysis_completed", {
+        duration_seconds: analysisDuration,
+        images_extracted: data.images_extracted || 0,
+      });
+
       setProgress(100);
       setResult(data);
       setState("done");
 
       console.log("ResearchLens: Result page activated");
     } catch (err) {
+      ReactGA.event("pdf_analysis_failed");
+
       console.error("ResearchLens analysis error:", err);
       setError(err.message || "Unable to analyze the PDF.");
       setState("idle");
@@ -965,6 +1013,10 @@ export default function App() {
     setChatError("");
     setChatLoading(true);
 
+    ReactGA.event("chat_question_asked", {
+      question_length: question.length,
+    });
+
     try {
       const response = await fetch(
         `${API_BASE_URL}/chat-with-paper`,
@@ -990,6 +1042,8 @@ export default function App() {
       }
 
       const answer = data.answer || "No answer returned.";
+
+      ReactGA.event("chat_answer_received");
 
       setChatMessages((previous) => [
         ...previous,
