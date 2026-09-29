@@ -684,20 +684,33 @@ async def analyze_image(
             )
 
         # Accept Windows or URL separators.
-        normalized = requested_path.replace("\\", "/")
+        normalized = requested_path.replace("\\", "/").strip()
 
-        relative_path = Path(
-            normalized
-        )
+        # Handle URL-style paths such as:
+        # /uploads/<analysis_id>/extracted_images/file.png
+        if normalized.startswith("/uploads/"):
+            image_path = (
+                BASE_DIR / normalized.lstrip("/")
+            ).resolve()
 
-        # Remove an accidental leading slash.
-        relative_path = Path(
-            str(relative_path).lstrip("/")
-        )
+        # Handle relative filesystem paths such as:
+        # uploads/<analysis_id>/extracted_images/file.png
+        elif normalized.startswith("uploads/"):
+            image_path = (
+                BASE_DIR / normalized
+            ).resolve()
 
-        image_path = (
-            BASE_DIR / relative_path
-        ).resolve()
+        else:
+            candidate_path = Path(normalized)
+
+            # Handle an actual absolute filesystem path such as:
+            # /app/uploads/...
+            if candidate_path.is_absolute():
+                image_path = candidate_path.resolve()
+            else:
+                image_path = (
+                    BASE_DIR / candidate_path
+                ).resolve()
 
         if not is_safe_upload_path(image_path):
             raise HTTPException(
