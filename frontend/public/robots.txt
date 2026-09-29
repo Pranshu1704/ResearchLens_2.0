@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://researchlens-2.netlify.app/sitemap.xml
